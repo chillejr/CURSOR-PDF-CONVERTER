@@ -1,3 +1,9 @@
+# CURSOR-PDF-CONVERTER
+
+Convert English PDFs to Swahili.
+
+---
+
 # English → Swahili PDF Converter
 
 A simple toolchain to:

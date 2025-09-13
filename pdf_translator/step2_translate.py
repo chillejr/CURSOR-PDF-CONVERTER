@@ -14,7 +14,7 @@ import time
 from typing import Iterable, List, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from deep_translator import GoogleTranslator
+from deep_translator import GoogleTranslator, MyMemoryTranslator
 
 from step1_extract import extract_text_from_pdf
 
@@ -78,6 +78,13 @@ def _translate_chunk(chunk: str, translator: GoogleTranslator, max_retries: int,
             result = translator.translate(chunk)
             if not (result or "").strip():
                 raise RuntimeError("Empty translation response")
+            # If translation equals source, try a fallback provider
+            if result.strip() == chunk.strip():
+                fallback = MyMemoryTranslator(source="en", target="sw")
+                fb = fallback.translate(chunk)
+                if (fb or "").strip() and fb.strip() != chunk.strip():
+                    return fb
+                raise RuntimeError("Unchanged translation from providers")
             return result
         except Exception as exc:
             last_error = exc
@@ -98,7 +105,7 @@ def translate_to_swahili(
     if not text:
         return ""
 
-    translator = GoogleTranslator(source="auto", target="sw")
+    translator = GoogleTranslator(source="en", target="sw")
 
     indexed_chunks: List[Tuple[int, str]] = [(i, c) for i, c in enumerate(_chunk_text(text, max_chars=3000))]
     if not indexed_chunks:

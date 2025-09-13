@@ -1,27 +1,3 @@
-# CURSOR-PDF-CONVERTER
-
-Convert English PDFs to Swahili.
-
----
-
-## Quick Start (Click-to-run GUI)
-No terminal required. Just download and double-click:
-
-- Windows: double‑click `run_gui.bat`
-- macOS: double‑click `run_gui_mac.command` (first time: right‑click → Open if Gatekeeper blocks)
-- Linux: double‑click `run_gui.sh` (make executable if needed: `chmod +x run_gui.sh`)
-
-What these do:
-- Create a local virtual environment in the project folder
-- Install dependencies from `requirements.txt`
-- Launch the GUI (Import PDF → Translate & Save As...)
-
-Requirements:
-- Windows/macOS/Linux with Python 3 installed
-- Linux may require `python3-tk` system package for Tkinter GUI
-
----
-
 # English → Swahili PDF Converter
 
 A simple toolchain to:
@@ -52,8 +28,8 @@ If you are viewing this on GitHub and want to install locally:
 
 1) Clone the repository
 ```bash
-git clone https://github.com/chillejr/CURSOR-PDF-CONVERTER.git
-cd CURSOR-PDF-CONVERTER
+git clone https://github.com/<your-username>/pdf_translator.git
+cd pdf_translator
 ```
 
 2) Create and activate a virtual environment
@@ -125,9 +101,6 @@ python cli.py gui
 ```
 
 ## Scripts
-- `run_gui.bat`: Windows click-to-run launcher
-- `run_gui_mac.command`: macOS double-click launcher
-- `run_gui.sh`: Linux launcher
 - `step1_extract.py`: Extraction using `pdfplumber`.
 - `step2_translate.py`: Translation using `deep-translator` with chunking + retries.
 - `step3_create_pdf.py`: Simple text PDF via `fpdf2` using built-in fonts.

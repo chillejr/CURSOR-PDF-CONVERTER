@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Step 2: Translate extracted text to Swahili using googletrans.
+Step 2: Translate extracted text to Swahili using deep-translator.
 
 - Reuses extract_text_from_pdf from step 1.
 - Adds translate_to_swahili(text) with simple chunking and retries.
@@ -13,7 +13,7 @@ import sys
 import time
 from typing import Iterable, List
 
-from googletrans import Translator  # googletrans==4.0.0-rc1
+from deep_translator import GoogleTranslator
 
 from step1_extract import extract_text_from_pdf
 
@@ -71,29 +71,26 @@ def _chunk_text(text: str, max_chars: int = 4500) -> Iterable[str]:
 
 
 def translate_to_swahili(text: str, max_retries: int = 3, backoff_seconds: float = 1.5) -> str:
-    """Translate English text to Swahili using googletrans.
+    """Translate English text to Swahili using deep-translator's GoogleTranslator.
 
     Handles chunking and simple retries for transient failures.
     """
     if not text:
         return ""
 
-    translator = Translator()
+    translator = GoogleTranslator(source="auto", target="sw")
     translated_chunks: List[str] = []
 
     for chunk in _chunk_text(text, max_chars=4500):
-        # Basic retry loop for each chunk
         last_error: Exception | None = None
         for attempt in range(1, max_retries + 1):
             try:
-                result = translator.translate(chunk, dest="sw")
-                translated_chunks.append(result.text)
+                translated_chunks.append(translator.translate(chunk))
                 last_error = None
                 break
-            except Exception as exc:  # network/rate issues
+            except Exception as exc:
                 last_error = exc
-                sleep_s = backoff_seconds * (2 ** (attempt - 1))
-                time.sleep(sleep_s)
+                time.sleep(backoff_seconds * (2 ** (attempt - 1)))
         if last_error is not None:
             raise RuntimeError(f"Translation failed after {max_retries} attempts: {last_error}")
 

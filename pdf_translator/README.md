@@ -2,7 +2,7 @@
 
 A simple toolchain to:
 - extract text from a PDF (`pdfplumber`),
-- translate English → Swahili (`googletrans` 4.0.0-rc1),
+- translate English → Swahili (`deep-translator`),
 - write a new text-based PDF (`fpdf2`),
 - optionally use a Tkinter GUI.
 
@@ -102,13 +102,13 @@ python cli.py gui
 
 ## Scripts
 - `step1_extract.py`: Extraction using `pdfplumber`.
-- `step2_translate.py`: Translation using `googletrans` with chunking + retries.
+- `step2_translate.py`: Translation using `deep-translator` with chunking + retries.
 - `step3_create_pdf.py`: Simple text PDF via `fpdf2` using built-in fonts.
 - `step4_gui.py`: Optional Tkinter GUI wrapping the full flow.
 - `cli.py`: Single entry point bundling all steps.
 
 ## Notes & Limitations
-- Translation quality: best-effort via Google Translate web client; may rate-limit.
+- Translation quality: best-effort via Google Translate (deep-translator provider); may rate-limit.
 - Long documents: the CLI chunking mitigates size limits but may be slower.
 - Layout preservation: this writes plain text PDFs (no original layout/images).
 - Character set: built-in PDF fonts are Latin-1; non‑Latin characters are replaced.

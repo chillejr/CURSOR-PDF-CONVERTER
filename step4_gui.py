@@ -60,6 +60,13 @@ class TranslatorApp:
         if not self.selected_file or not os.path.isfile(self.selected_file):
             messagebox.showwarning("No file", "Please select a valid PDF file first.")
             return
+        # Basic check for Tk availability on headless systems
+        try:
+            _ = tk.Toplevel(self.root)
+            _.destroy()
+        except Exception:
+            messagebox.showerror("GUI Error", "Tkinter GUI is not available in this environment.")
+            return
 
         self.progress.start(10)
         self.status_var.set("Processing...")

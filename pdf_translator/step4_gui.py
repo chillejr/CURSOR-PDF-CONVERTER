@@ -22,11 +22,12 @@ class TranslatorApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("PDF English→Swahili Converter")
-        self.root.geometry("520x240")
+        self.root.geometry("560x270")
 
         self.selected_file: str | None = None
 
         self.status_var = tk.StringVar(value="Select a file")
+        self.preserve_var = tk.BooleanVar(value=True)
 
         frm = ttk.Frame(root, padding=12)
         frm.pack(fill=tk.BOTH, expand=True)
@@ -42,6 +43,11 @@ class TranslatorApp:
 
         self.process_btn = ttk.Button(btn_row, text="Translate & Save As...", command=self.on_process)
         self.process_btn.pack(side=tk.LEFT, padx=(8, 0))
+
+        options_row = ttk.Frame(frm)
+        options_row.pack(fill=tk.X, pady=(0, 8))
+        self.preserve_chk = ttk.Checkbutton(options_row, text="Preserve layout (slower, keeps images)", variable=self.preserve_var)
+        self.preserve_chk.pack(anchor=tk.W)
 
         self.progress = ttk.Progressbar(frm, mode="indeterminate")
         self.progress.pack(fill=tk.X, pady=(8, 8))
@@ -70,7 +76,7 @@ class TranslatorApp:
 
         abs_in = os.path.abspath(self.selected_file)
         root_name, _ = os.path.splitext(abs_in)
-        default_out = f"{root_name}_swahili.pdf"
+        default_out = f"{root_name}_swahili{'_preserve' if self.preserve_var.get() else ''}.pdf"
 
         out_path = filedialog.asksaveasfilename(
             title="Save Translated PDF As",
@@ -90,16 +96,20 @@ class TranslatorApp:
         self.select_btn.config(state=tk.DISABLED)
         self.process_btn.config(state=tk.DISABLED)
 
-        threading.Thread(target=self._worker, args=(abs_in, out_path), daemon=True).start()
+        threading.Thread(target=self._worker, args=(abs_in, out_path, self.preserve_var.get()), daemon=True).start()
 
-    def _worker(self, input_path: str, output_path: str) -> None:
+    def _worker(self, input_path: str, output_path: str, preserve: bool) -> None:
         try:
-            source_text = extract_text_from_pdf(input_path)
-            if not source_text.strip():
-                raise RuntimeError("No text extracted from the PDF.")
-
-            sw_text = translate_to_swahili(source_text)
-            create_translated_pdf(sw_text, output_path)
+            if preserve:
+                from preserve_layout import PreserveLayoutConverter
+                converter = PreserveLayoutConverter()
+                converter.convert(input_path, output_path)
+            else:
+                source_text = extract_text_from_pdf(input_path)
+                if not source_text.strip():
+                    raise RuntimeError("No text extracted from the PDF.")
+                sw_text = translate_to_swahili(source_text)
+                create_translated_pdf(sw_text, output_path)
 
             self._on_done(success=True, message=f"Saved: {output_path}")
         except Exception as exc:

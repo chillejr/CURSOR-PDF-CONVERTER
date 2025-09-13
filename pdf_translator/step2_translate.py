@@ -14,7 +14,7 @@ import time
 from typing import Iterable, List, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from deep_translator import GoogleTranslator, MyMemoryTranslator
+from deep_translator import GoogleTranslator, MyMemoryTranslator, LibreTranslator
 
 from step1_extract import extract_text_from_pdf
 
@@ -84,6 +84,14 @@ def _translate_chunk(chunk: str, translator: GoogleTranslator, max_retries: int,
                 fb = fallback.translate(chunk)
                 if (fb or "").strip() and fb.strip() != chunk.strip():
                     return fb
+                # Try LibreTranslate public endpoint as a last resort
+                try:
+                    lt = LibreTranslator(source="en", target="sw", api_url=os.getenv("LT_API_URL", "https://libretranslate.de"))
+                    lb = lt.translate(chunk)
+                    if (lb or "").strip() and lb.strip() != chunk.strip():
+                        return lb
+                except Exception:
+                    pass
                 raise RuntimeError("Unchanged translation from providers")
             return result
         except Exception as exc:

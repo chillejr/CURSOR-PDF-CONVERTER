@@ -23,6 +23,62 @@ pip install -r requirements.txt
 
 If your system forbids `pip` in the base interpreter (PEP 668), always use the venv.
 
+## Install and Run from GitHub
+If you are viewing this on GitHub and want to install locally:
+
+1) Clone the repository
+```bash
+git clone https://github.com/<your-username>/pdf_translator.git
+cd pdf_translator
+```
+
+2) Create and activate a virtual environment
+- macOS/Linux:
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+```
+- Windows (PowerShell):
+```powershell
+py -3 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
+
+3) Install dependencies
+```bash
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+4) Run the program
+```bash
+# Show CLI help
+python cli.py -h
+
+# Extract text to stdout
+python cli.py extract /path/to/input.pdf
+
+# Translate to Swahili and print to stdout
+python cli.py translate /path/to/input.pdf
+
+# Convert: extract + translate + save a new PDF
+python cli.py convert /path/to/input.pdf /path/to/output.pdf
+# Output path is optional; defaults to <input>_swahili.pdf
+
+# Launch GUI (requires a desktop environment)
+python cli.py gui
+```
+
+5) Update later
+```bash
+git pull
+pip install -U -r requirements.txt
+```
+
+Notes:
+- If you see an "externally-managed-environment" error, your base Python is locked by the OS. Activate the venv first, then install.
+- On some Linux distros, the GUI may require `python3-tk` (system package). If unavailable, use the CLI instead.
+
 ## CLI Usage
 The unified CLI exposes subcommands: `extract`, `translate`, `convert`, `gui`.
 

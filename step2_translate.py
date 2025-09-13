@@ -19,7 +19,7 @@ from deep_translator import GoogleTranslator
 from step1_extract import extract_text_from_pdf
 
 
-def _chunk_text(text: str, max_chars: int = 3000) -> Iterable[str]:
+def _chunk_text(text: str, max_chars: int = 2500) -> Iterable[str]:
     """Yield chunks of text no longer than max_chars, splitting on paragraph/sentence boundaries.
 
     This is a heuristic to avoid hitting size limits or timeouts.
@@ -75,7 +75,10 @@ def _translate_chunk(chunk: str, translator: GoogleTranslator, max_retries: int,
     last_error: Exception | None = None
     for attempt in range(1, max_retries + 1):
         try:
-            return translator.translate(chunk)
+            result = translator.translate(chunk)
+            if not (result or "").strip():
+                raise RuntimeError("Empty translation response")
+            return result
         except Exception as exc:
             last_error = exc
             time.sleep(backoff_seconds * (2 ** (attempt - 1)))
@@ -84,9 +87,9 @@ def _translate_chunk(chunk: str, translator: GoogleTranslator, max_retries: int,
 
 def translate_to_swahili(
     text: str,
-    max_retries: int = 3,
+    max_retries: int = 4,
     backoff_seconds: float = 1.5,
-    max_workers: int = 3,
+    max_workers: int = 2,
 ) -> str:
     """Translate English text to Swahili using deep-translator's GoogleTranslator.
 

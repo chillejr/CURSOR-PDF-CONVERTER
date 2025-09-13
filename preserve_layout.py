@@ -55,19 +55,38 @@ class PreserveLayoutConverter:
                 for _, _, _, _, txt in page_blocks:
                     translated_blocks.append(translate_to_swahili(txt, max_workers=self.translate_concurrency))
 
-            # Redact original text areas
-            for (x0, y0, x1, y1, _txt) in page_blocks:
-                rect = fitz.Rect(x0, y0, x1, y1)
-                page.add_redact_annot(rect, fill=(1, 1, 1))
-            page.apply_redactions()
+            # Redact only blocks that have a non-empty translation
+            redact_rects = []
+            for (x0, y0, x1, y1, _txt), new_text in zip(page_blocks, translated_blocks):
+                if (new_text or "").strip():
+                    rect = fitz.Rect(x0, y0, x1, y1)
+                    page.add_redact_annot(rect, fill=(1, 1, 1))
+                    redact_rects.append(rect)
+            if redact_rects:
+                page.apply_redactions()
 
             # Draw translated text roughly in original areas using fitted text
             for (x0, y0, x1, y1, _txt), new_text in zip(page_blocks, translated_blocks):
+                if not (new_text or "").strip():
+                    continue
                 rect = fitz.Rect(x0, y0, x1, y1)
-                # Fit text inside rect with auto font size
-                page.insert_textbox(rect, new_text, fontsize=0, fontname="helv", color=(0, 0, 0), align=0)
+                self._draw_fit_text(page, rect, new_text)
 
         # Save to new file; keep images and vector graphics as-is
         os.makedirs(os.path.dirname(os.path.abspath(output_pdf)) or ".", exist_ok=True)
         doc.save(output_pdf, deflate=True, incremental=False)
         doc.close()
+
+    @staticmethod
+    def _draw_fit_text(page: fitz.Page, rect: fitz.Rect, text: str) -> None:
+        # Try auto-fit first; if leftover remains, reduce font size gradually
+        leftover = page.insert_textbox(rect, text, fontsize=0, fontname="helv", color=(0, 0, 0), align=0)
+        if not leftover:
+            return
+        for size in (14, 12, 11, 10, 9, 8, 7, 6):
+            leftover = page.insert_textbox(rect, text, fontsize=size, fontname="helv", color=(0, 0, 0), align=0)
+            if not leftover:
+                return
+        # As a last resort, truncate to show at least something
+        visible = text[: max(50, len(text) // 4)] + " …"
+        page.insert_textbox(rect, visible, fontsize=6, fontname="helv", color=(0, 0, 0), align=0)

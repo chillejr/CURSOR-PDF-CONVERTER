@@ -3,7 +3,7 @@
 Step 2: Translate extracted text to Swahili using deep-translator.
 
 - Reuses extract_text_from_pdf from step 1.
-- Adds translate_to_swahili(text) with simple chunking and retries.
+- Adds translate_to_swahili(text) with simple chunking, retries, and concurrency.
 - CLI: asks for a PDF path, extracts, translates, and prints the Swahili text.
 """
 from __future__ import annotations
@@ -11,14 +11,15 @@ from __future__ import annotations
 import os
 import sys
 import time
-from typing import Iterable, List
+from typing import Iterable, List, Tuple
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from deep_translator import GoogleTranslator
 
 from step1_extract import extract_text_from_pdf
 
 
-def _chunk_text(text: str, max_chars: int = 4500) -> Iterable[str]:
+def _chunk_text(text: str, max_chars: int = 3000) -> Iterable[str]:
     """Yield chunks of text no longer than max_chars, splitting on paragraph/sentence boundaries.
 
     This is a heuristic to avoid hitting size limits or timeouts.
@@ -70,31 +71,53 @@ def _chunk_text(text: str, max_chars: int = 4500) -> Iterable[str]:
         yield chunk
 
 
-def translate_to_swahili(text: str, max_retries: int = 3, backoff_seconds: float = 1.5) -> str:
+def _translate_chunk(chunk: str, translator: GoogleTranslator, max_retries: int, backoff_seconds: float) -> str:
+    last_error: Exception | None = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            return translator.translate(chunk)
+        except Exception as exc:
+            last_error = exc
+            time.sleep(backoff_seconds * (2 ** (attempt - 1)))
+    raise RuntimeError(f"Translation failed after {max_retries} attempts: {last_error}")
+
+
+def translate_to_swahili(
+    text: str,
+    max_retries: int = 3,
+    backoff_seconds: float = 1.5,
+    max_workers: int = 3,
+) -> str:
     """Translate English text to Swahili using deep-translator's GoogleTranslator.
 
-    Handles chunking and simple retries for transient failures.
+    Concurrency speeds up long texts while preserving original order.
     """
     if not text:
         return ""
 
     translator = GoogleTranslator(source="auto", target="sw")
-    translated_chunks: List[str] = []
 
-    for chunk in _chunk_text(text, max_chars=4500):
-        last_error: Exception | None = None
-        for attempt in range(1, max_retries + 1):
+    indexed_chunks: List[Tuple[int, str]] = [(i, c) for i, c in enumerate(_chunk_text(text, max_chars=3000))]
+    if not indexed_chunks:
+        return ""
+
+    results: List[str] = [""] * len(indexed_chunks)
+
+    # Limit concurrency to avoid rate limiting
+    with ThreadPoolExecutor(max_workers=max(1, max_workers)) as executor:
+        future_to_index = {
+            executor.submit(_translate_chunk, chunk, translator, max_retries, backoff_seconds): idx
+            for idx, chunk in indexed_chunks
+        }
+        for future in as_completed(future_to_index):
+            idx = future_to_index[future]
             try:
-                translated_chunks.append(translator.translate(chunk))
-                last_error = None
-                break
+                results[idx] = future.result()
             except Exception as exc:
-                last_error = exc
-                time.sleep(backoff_seconds * (2 ** (attempt - 1)))
-        if last_error is not None:
-            raise RuntimeError(f"Translation failed after {max_retries} attempts: {last_error}")
+                # Propagate the first error to fail fast
+                raise RuntimeError(f"Chunk {idx} translation error: {exc}") from exc
 
-    return "\n\n".join(translated_chunks)
+    return "\n\n".join(results)
 
 
 def _prompt_path_from_stdin() -> str:

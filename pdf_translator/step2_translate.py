@@ -80,10 +80,15 @@ def _translate_chunk(chunk: str, translator: GoogleTranslator, max_retries: int,
                 raise RuntimeError("Empty translation response")
             # If translation equals source, try a fallback provider
             if result.strip() == chunk.strip():
-                fallback = MyMemoryTranslator(source="en", target="sw")
-                fb = fallback.translate(chunk)
-                if (fb or "").strip() and fb.strip() != chunk.strip():
-                    return fb
+                # Try MyMemory using language names (more robust than codes)
+                try:
+                    mm = MyMemoryTranslator(source="english", target="swahili")
+                    fb = mm.translate(chunk)
+                    if (fb or "").strip() and fb.strip() != chunk.strip():
+                        return fb
+                except Exception:
+                    # ignore and continue to next fallback
+                    pass
                 # Try LibreTranslate public endpoint as a last resort
                 try:
                     lt = LibreTranslator(source="en", target="sw", api_url=os.getenv("LT_API_URL", "https://libretranslate.de"))

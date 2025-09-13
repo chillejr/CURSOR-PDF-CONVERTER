@@ -44,16 +44,19 @@ class PreserveLayoutConverter:
             if not page_blocks:
                 continue
 
-            original_text = "\n\n".join([blk[4] for blk in page_blocks])
-            translated_text = translate_to_swahili(original_text, max_workers=self.translate_concurrency)
-            translated_blocks = translated_text.split("\n\n")
+            original_texts = [blk[4] for blk in page_blocks]
+            # Translate block-by-block to avoid provider skipping and keep order stable
+            translated_blocks = []
+            for txt in original_texts:
+                translated_blocks.append(translate_to_swahili(txt, max_workers=self.translate_concurrency))
 
-            # Length mismatch fallback: pad or trim
+            # Safety: ensure lengths match
             if len(translated_blocks) != len(page_blocks):
-                # naive rescue: translate each block individually
-                translated_blocks = []
-                for _, _, _, _, txt in page_blocks:
-                    translated_blocks.append(translate_to_swahili(txt, max_workers=self.translate_concurrency))
+                # Pad or trim
+                if len(translated_blocks) < len(page_blocks):
+                    translated_blocks += [""] * (len(page_blocks) - len(translated_blocks))
+                else:
+                    translated_blocks = translated_blocks[: len(page_blocks)]
 
             # Redact only blocks that have a non-empty translation
             redact_rects = []

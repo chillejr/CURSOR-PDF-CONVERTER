@@ -71,37 +71,69 @@ def _chunk_text(text: str, max_chars: int = 2500) -> Iterable[str]:
         yield chunk
 
 
+def _provider_try_all(chunk: str) -> str:
+    # 1) Google (auto -> sw)
+    try:
+        res = GoogleTranslator(source="auto", target="sw").translate(chunk)
+        if (res or "").strip() and res.strip() != chunk.strip():
+            return res
+    except Exception:
+        pass
+
+    # 2) MyMemory with locale codes (more accepted): en-GB -> sw-KE
+    try:
+        mm_code = MyMemoryTranslator(source="en-GB", target="sw-KE")
+        res = mm_code.translate(chunk)
+        if (res or "").strip() and res.strip() != chunk.strip():
+            return res
+    except Exception:
+        pass
+
+    # 3) MyMemory with language names
+    try:
+        mm_name = MyMemoryTranslator(source="english", target="swahili")
+        res = mm_name.translate(chunk)
+        if (res or "").strip() and res.strip() != chunk.strip():
+            return res
+    except Exception:
+        pass
+
+    # 4) LibreTranslate (public or user-provided)
+    try:
+        lt_url = os.getenv("LT_API_URL", "https://libretranslate.de")
+        lt = LibreTranslator(source="en", target="sw", api_url=lt_url)
+        res = lt.translate(chunk)
+        if (res or "").strip() and res.strip() != chunk.strip():
+            return res
+    except Exception:
+        pass
+
+    # Fallback: return original so pipeline continues
+    return chunk
+
+
 def _translate_chunk(chunk: str, translator: GoogleTranslator, max_retries: int, backoff_seconds: float) -> str:
     last_error: Exception | None = None
     for attempt in range(1, max_retries + 1):
         try:
+            # First try the preferred translator
             result = translator.translate(chunk)
             if not (result or "").strip():
                 raise RuntimeError("Empty translation response")
-            # If translation equals source, try a fallback provider
             if result.strip() == chunk.strip():
-                # Try MyMemory using language names (more robust than codes)
-                try:
-                    mm = MyMemoryTranslator(source="english", target="swahili")
-                    fb = mm.translate(chunk)
-                    if (fb or "").strip() and fb.strip() != chunk.strip():
-                        return fb
-                except Exception:
-                    # ignore and continue to next fallback
-                    pass
-                # Try LibreTranslate public endpoint as a last resort
-                try:
-                    lt = LibreTranslator(source="en", target="sw", api_url=os.getenv("LT_API_URL", "https://libretranslate.de"))
-                    lb = lt.translate(chunk)
-                    if (lb or "").strip() and lb.strip() != chunk.strip():
-                        return lb
-                except Exception:
-                    pass
-                raise RuntimeError("Unchanged translation from providers")
+                # Drive fallbacks immediately if unchanged
+                fb = _provider_try_all(chunk)
+                if fb.strip() == chunk.strip():
+                    raise RuntimeError("Unchanged translation from providers")
+                return fb
             return result
         except Exception as exc:
             last_error = exc
             time.sleep(backoff_seconds * (2 ** (attempt - 1)))
+    # Last-chance: try all providers once before giving up
+    fb = _provider_try_all(chunk)
+    if fb.strip() != chunk.strip():
+        return fb
     raise RuntimeError(f"Translation failed after {max_retries} attempts: {last_error}")
 
 
@@ -136,9 +168,17 @@ def translate_to_swahili(
             idx = future_to_index[future]
             try:
                 results[idx] = future.result()
-            except Exception as exc:
-                # Propagate the first error to fail fast
-                raise RuntimeError(f"Chunk {idx} translation error: {exc}") from exc
+            except Exception:
+                # Fallback: split the chunk by sentences/lines and translate sequentially
+                _, original_chunk = indexed_chunks[idx]
+                parts: List[str] = []
+                for piece in original_chunk.split("\n"):
+                    if not piece.strip():
+                        parts.append("")
+                        continue
+                    parts.append(_provider_try_all(piece))
+                merged = "\n".join(parts)
+                results[idx] = merged if merged.strip() else original_chunk
 
     return "\n\n".join(results)
 

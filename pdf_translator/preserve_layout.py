@@ -100,8 +100,8 @@ class PreserveLayoutConverter:
             redact_rects = []
             for (x0, y0, x1, y1, _t, _sz, _rgb), new_text in zip(page_lines, translated):
                 if (new_text or "").strip():
-                    # Fill with white to knock out original text (limits to line box)
-                    page.add_redact_annot(fitz.Rect(x0, y0, x1, y1), fill=(1, 1, 1))
+                    # Remove original text glyphs but keep backgrounds/shapes (no fill)
+                    page.add_redact_annot(fitz.Rect(x0, y0, x1, y1), fill=None)
                     redact_rects.append(1)
             if redact_rects:
                 page.apply_redactions()

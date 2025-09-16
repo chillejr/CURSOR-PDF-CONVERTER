@@ -91,14 +91,8 @@ class PreserveLayoutConverter:
                 if not (new_text or "").strip():
                     continue
                 rect = fitz.Rect(x0, y0, x1, y1)
-                fontname = "helv"
-                if is_bold and is_italic:
-                    fontname = "helv-BoldOblique"
-                elif is_bold:
-                    fontname = "helv-Bold"
-                elif is_italic:
-                    fontname = "helv-Oblique"
-                self._draw_fit_text(page, rect, new_text, base_size=sz, color=rgb, fontname=fontname)
+                # Use core base-14 font to avoid external font files
+                self._draw_fit_text(page, rect, new_text, base_size=sz, color=rgb, fontname="helv")
 
         os.makedirs(os.path.dirname(os.path.abspath(output_pdf)) or ".", exist_ok=True)
         doc.save(output_pdf, deflate=True, incremental=False)

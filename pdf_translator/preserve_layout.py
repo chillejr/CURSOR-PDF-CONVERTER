@@ -13,8 +13,9 @@ from step2_translate import translate_to_swahili
 
 
 class PreserveLayoutConverter:
-    def __init__(self, translate_concurrency: int = 3) -> None:
+    def __init__(self, translate_concurrency: int = 3, translate_func=None) -> None:
         self.translate_concurrency = translate_concurrency
+        self.translate_func = translate_func  # optional override
 
     def convert(self, input_pdf: str, output_pdf: str) -> None:
         if not os.path.isfile(input_pdf):
@@ -54,7 +55,13 @@ class PreserveLayoutConverter:
             original_texts = [blk[4] for blk in page_blocks]
             translated_blocks = []
             for txt in original_texts:
-                translated_blocks.append(translate_to_swahili(txt, max_workers=self.translate_concurrency))
+                if self.translate_func is not None:
+                    try:
+                        translated_blocks.append(self.translate_func(txt))
+                    except Exception:
+                        translated_blocks.append(txt)
+                else:
+                    translated_blocks.append(translate_to_swahili(txt, max_workers=self.translate_concurrency))
 
             if len(translated_blocks) != len(page_blocks):
                 if len(translated_blocks) < len(page_blocks):

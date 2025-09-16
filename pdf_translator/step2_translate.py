@@ -72,7 +72,23 @@ def _chunk_text(text: str, max_chars: int = 2500) -> Iterable[str]:
 
 
 def _provider_try_all(chunk: str) -> str:
-    # 1) Google (auto -> sw)
+    # Prefer MyMemory with explicit regional codes first (most permissive on some networks)
+    try:
+        res = MyMemoryTranslator(source="en-GB", target="sw-KE").translate(chunk)
+        if (res or "").strip() and res.strip() != chunk.strip():
+            return res
+    except Exception:
+        pass
+
+    # MyMemory with language names
+    try:
+        res = MyMemoryTranslator(source="english", target="swahili").translate(chunk)
+        if (res or "").strip() and res.strip() != chunk.strip():
+            return res
+    except Exception:
+        pass
+
+    # Google Translate (auto detect -> sw)
     try:
         res = GoogleTranslator(source="auto", target="sw").translate(chunk)
         if (res or "").strip() and res.strip() != chunk.strip():
@@ -80,35 +96,16 @@ def _provider_try_all(chunk: str) -> str:
     except Exception:
         pass
 
-    # 2) MyMemory with locale codes (more accepted): en-GB -> sw-KE
+    # LibreTranslate (allow override via environment)
     try:
-        mm_code = MyMemoryTranslator(source="en-GB", target="sw-KE")
-        res = mm_code.translate(chunk)
+        lt_url = os.getenv("LT_API_URL", "https://de.libretranslate.com")
+        res = LibreTranslator(source="en", target="sw", api_url=lt_url).translate(chunk)
         if (res or "").strip() and res.strip() != chunk.strip():
             return res
     except Exception:
         pass
 
-    # 3) MyMemory with language names
-    try:
-        mm_name = MyMemoryTranslator(source="english", target="swahili")
-        res = mm_name.translate(chunk)
-        if (res or "").strip() and res.strip() != chunk.strip():
-            return res
-    except Exception:
-        pass
-
-    # 4) LibreTranslate (public or user-provided)
-    try:
-        lt_url = os.getenv("LT_API_URL", "https://libretranslate.de")
-        lt = LibreTranslator(source="en", target="sw", api_url=lt_url)
-        res = lt.translate(chunk)
-        if (res or "").strip() and res.strip() != chunk.strip():
-            return res
-    except Exception:
-        pass
-
-    # Fallback: return original so pipeline continues
+    # All providers failed or returned unchanged; return original chunk to avoid hard failure
     return chunk
 
 
@@ -123,18 +120,13 @@ def _translate_chunk(chunk: str, translator: GoogleTranslator, max_retries: int,
             if result.strip() == chunk.strip():
                 # Drive fallbacks immediately if unchanged
                 fb = _provider_try_all(chunk)
-                if fb.strip() == chunk.strip():
-                    raise RuntimeError("Unchanged translation from providers")
                 return fb
             return result
         except Exception as exc:
             last_error = exc
             time.sleep(backoff_seconds * (2 ** (attempt - 1)))
-    # Last-chance: try all providers once before giving up
-    fb = _provider_try_all(chunk)
-    if fb.strip() != chunk.strip():
-        return fb
-    raise RuntimeError(f"Translation failed after {max_retries} attempts: {last_error}")
+    # Last-chance: try all providers once; return whatever we get (may be original text)
+    return _provider_try_all(chunk)
 
 
 def translate_to_swahili(

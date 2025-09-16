@@ -69,7 +69,7 @@ class PreserveLayoutConverter:
                         continue
                     lx0, ly0, lx1, ly1 = min(xs0), min(ys0), max(xs1), max(ys1)
                     # Small padding inside the line rect to allow wrapping
-                    pad = 1.0
+                    pad = 2.0
                     page_lines.append((lx0 + pad, ly0 + pad, lx1 - pad, ly1 - pad, line_text, max_size if max_size > 0 else 0.0, col_rgb))
             all_lines.append(page_lines)
 
@@ -96,11 +96,12 @@ class PreserveLayoutConverter:
                 else:
                     translated = translated[: len(page_lines)]
 
-            # Redact only lines that will be redrawn; keep backgrounds/images
+            # Redact only lines that will be redrawn; remove original glyphs to avoid overlap
             redact_rects = []
             for (x0, y0, x1, y1, _t, _sz, _rgb), new_text in zip(page_lines, translated):
                 if (new_text or "").strip():
-                    page.add_redact_annot(fitz.Rect(x0, y0, x1, y1), fill=None)
+                    # Fill with white to knock out original text (limits to line box)
+                    page.add_redact_annot(fitz.Rect(x0, y0, x1, y1), fill=(1, 1, 1))
                     redact_rects.append(1)
             if redact_rects:
                 page.apply_redactions()
@@ -119,18 +120,16 @@ class PreserveLayoutConverter:
 
     @staticmethod
     def _draw_fit_text(page: fitz.Page, rect: fitz.Rect, text: str, base_size: float | None = None, color: Tuple[float, float, float] = (0, 0, 0), fontname: str = "helv") -> None:
-        # try with provided base size first (approximate original styling)
-        if base_size and base_size > 0:
-            leftover = page.insert_textbox(rect, text, fontsize=base_size, fontname=fontname, color=color, align=0)
-            if not leftover:
-                return
-        # then try auto-fit
+        # Try auto-fit first with left alignment and line wrapping
         leftover = page.insert_textbox(rect, text, fontsize=0, fontname=fontname, color=color, align=0)
         if not leftover:
             return
-        for size in (14, 12, 11, 10, 9, 8, 7, 6):
+        # If still leftover, attempt progressive downsizing
+        start = int(base_size) if base_size and base_size > 0 else 12
+        for size in range(start, 5, -1):
             leftover = page.insert_textbox(rect, text, fontsize=size, fontname=fontname, color=color, align=0)
             if not leftover:
                 return
-        visible = text[: max(50, len(text) // 4)] + " …"
+        # As last resort, truncate with ellipsis to avoid overlap
+        visible = text[: max(50, len(text) // 3)] + " …"
         page.insert_textbox(rect, visible, fontsize=6, fontname=fontname, color=color, align=0)

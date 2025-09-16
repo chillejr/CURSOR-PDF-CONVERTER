@@ -5,6 +5,9 @@ import os
 from typing import List, Tuple
 
 import fitz  # PyMuPDF
+import pytesseract
+from PIL import Image
+import io
 
 from step2_translate import translate_to_swahili
 
@@ -19,17 +22,10 @@ class PreserveLayoutConverter:
 
         doc = fitz.open(input_pdf)
 
-        # Strategy:
-        # 1) Extract text blocks with coordinates via page.get_text("blocks").
-        # 2) Translate each block.
-        # 3) Redact original text areas and draw translated text in-place.
-        # Images/graphics are left untouched.
-
         # Collect blocks per page
         all_blocks: List[List[Tuple[float, float, float, float, str]]] = []
         for page in doc:
             blocks = page.get_text("blocks")  # (x0, y0, x1, y1, text, block_no, block_type)
-            # Filter text blocks only (block_type=0 in practice)
             page_blocks: List[Tuple[float, float, float, float, str]] = []
             for b in blocks:
                 if len(b) >= 5 and isinstance(b[4], str):
@@ -38,21 +34,29 @@ class PreserveLayoutConverter:
                         page_blocks.append((x0, y0, x1, y1, text))
             all_blocks.append(page_blocks)
 
-        # Translate page by page to reduce API load and preserve order
         for page_index, page in enumerate(doc):
             page_blocks = all_blocks[page_index]
+
             if not page_blocks:
+                # OCR fallback: rasterize page, OCR, and overlay text
+                pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))  # 2x scale for better OCR
+                img = Image.open(io.BytesIO(pix.tobytes("png")))
+                ocr_text = pytesseract.image_to_string(img, lang="eng") or ""
+                if ocr_text.strip():
+                    sw_text = translate_to_swahili(ocr_text, max_workers=self.translate_concurrency)
+                    # Draw a semi-transparent white box and write text top-left; keep images
+                    rect = fitz.Rect(36, 36, page.rect.width - 36, page.rect.height - 36)
+                    page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1), fill_opacity=0.8)
+                    self._draw_fit_text(page, rect, sw_text)
                 continue
 
+            # Block-by-block translation for regular text pages
             original_texts = [blk[4] for blk in page_blocks]
-            # Translate block-by-block to avoid provider skipping and keep order stable
             translated_blocks = []
             for txt in original_texts:
                 translated_blocks.append(translate_to_swahili(txt, max_workers=self.translate_concurrency))
 
-            # Safety: ensure lengths match
             if len(translated_blocks) != len(page_blocks):
-                # Pad or trim
                 if len(translated_blocks) < len(page_blocks):
                     translated_blocks += [""] * (len(page_blocks) - len(translated_blocks))
                 else:
@@ -68,21 +72,19 @@ class PreserveLayoutConverter:
             if redact_rects:
                 page.apply_redactions()
 
-            # Draw translated text roughly in original areas using fitted text
+            # Draw translated text roughly in original areas
             for (x0, y0, x1, y1, _txt), new_text in zip(page_blocks, translated_blocks):
                 if not (new_text or "").strip():
                     continue
                 rect = fitz.Rect(x0, y0, x1, y1)
                 self._draw_fit_text(page, rect, new_text)
 
-        # Save to new file; keep images and vector graphics as-is
         os.makedirs(os.path.dirname(os.path.abspath(output_pdf)) or ".", exist_ok=True)
         doc.save(output_pdf, deflate=True, incremental=False)
         doc.close()
 
     @staticmethod
     def _draw_fit_text(page: fitz.Page, rect: fitz.Rect, text: str) -> None:
-        # Try auto-fit first; if leftover remains, reduce font size gradually
         leftover = page.insert_textbox(rect, text, fontsize=0, fontname="helv", color=(0, 0, 0), align=0)
         if not leftover:
             return
@@ -90,6 +92,5 @@ class PreserveLayoutConverter:
             leftover = page.insert_textbox(rect, text, fontsize=size, fontname="helv", color=(0, 0, 0), align=0)
             if not leftover:
                 return
-        # As a last resort, truncate to show at least something
         visible = text[: max(50, len(text) // 4)] + " …"
         page.insert_textbox(rect, visible, fontsize=6, fontname="helv", color=(0, 0, 0), align=0)

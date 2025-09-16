@@ -72,33 +72,40 @@ def _chunk_text(text: str, max_chars: int = 2500) -> Iterable[str]:
 
 
 def _provider_try_all(chunk: str) -> str:
-    """Try all translation providers in order, return first successful result or original text."""
-    if not chunk.strip():
-        return chunk
-        
-    providers = [
-        # MyMemory with correct Swahili code first
-        lambda: MyMemoryTranslator(source="en-GB", target="sw-KE").translate(chunk),
-        lambda: MyMemoryTranslator(source="english", target="swahili").translate(chunk),
-        # Google fallback
-        lambda: GoogleTranslator(source="auto", target="sw").translate(chunk),
-        # LibreTranslate fallback
-        lambda: LibreTranslator(
-            source="en", 
-            target="sw", 
-            api_url=os.getenv("LT_API_URL", "https://de.libretranslate.com")
-        ).translate(chunk)
-    ]
-    
-    for provider in providers:
-        try:
-            result = provider()
-            if result and result.strip() and result.strip() != chunk.strip():
-                return result
-        except Exception:
-            continue
-    
-    # If all providers fail, return original text
+    # Prefer MyMemory with explicit regional codes first (most permissive on some networks)
+    try:
+        res = MyMemoryTranslator(source="en-GB", target="sw-KE").translate(chunk)
+        if (res or "").strip() and res.strip() != chunk.strip():
+            return res
+    except Exception:
+        pass
+
+    # MyMemory with language names
+    try:
+        res = MyMemoryTranslator(source="english", target="swahili").translate(chunk)
+        if (res or "").strip() and res.strip() != chunk.strip():
+            return res
+    except Exception:
+        pass
+
+    # Google Translate (auto detect -> sw)
+    try:
+        res = GoogleTranslator(source="auto", target="sw").translate(chunk)
+        if (res or "").strip() and res.strip() != chunk.strip():
+            return res
+    except Exception:
+        pass
+
+    # LibreTranslate (allow override via environment)
+    try:
+        lt_url = os.getenv("LT_API_URL", "https://de.libretranslate.com")
+        res = LibreTranslator(source="en", target="sw", api_url=lt_url).translate(chunk)
+        if (res or "").strip() and res.strip() != chunk.strip():
+            return res
+    except Exception:
+        pass
+
+    # All providers failed or returned unchanged; return original chunk to avoid hard failure
     return chunk
 
 
@@ -106,18 +113,19 @@ def _translate_chunk(chunk: str, translator: GoogleTranslator, max_retries: int,
     last_error: Exception | None = None
     for attempt in range(1, max_retries + 1):
         try:
+            # First try the preferred translator
             result = translator.translate(chunk)
             if not (result or "").strip():
                 raise RuntimeError("Empty translation response")
-            # If translation equals source, try fallback providers
             if result.strip() == chunk.strip():
-                return _provider_try_all(chunk)
+                # Drive fallbacks immediately if unchanged
+                fb = _provider_try_all(chunk)
+                return fb
             return result
         except Exception as exc:
             last_error = exc
             time.sleep(backoff_seconds * (2 ** (attempt - 1)))
-    
-    # After all retries fail, use provider fallback instead of raising
+    # Last-chance: try all providers once; return whatever we get (may be original text)
     return _provider_try_all(chunk)
 
 
@@ -152,15 +160,15 @@ def translate_to_swahili(
             idx = future_to_index[future]
             try:
                 results[idx] = future.result()
-            except Exception as exc:
-                # Instead of failing, split by lines and try each line individually
+            except Exception:
+                # Fallback: split the chunk by sentences/lines and translate sequentially
                 _, original_chunk = indexed_chunks[idx]
-                parts = []
-                for line in original_chunk.split("\n"):
-                    if line.strip():
-                        parts.append(_provider_try_all(line))
-                    else:
+                parts: List[str] = []
+                for piece in original_chunk.split("\n"):
+                    if not piece.strip():
                         parts.append("")
+                        continue
+                    parts.append(_provider_try_all(piece))
                 merged = "\n".join(parts)
                 results[idx] = merged if merged.strip() else original_chunk
 

@@ -72,7 +72,12 @@ def _cmd_preserve(args: argparse.Namespace) -> int:
 
     from preserve_layout import PreserveLayoutConverter
 
-    converter = PreserveLayoutConverter()
+    translate_func = None
+    if args.provider == "mymemory":
+        from deep_translator import MyMemoryTranslator
+        translate_func = lambda s: MyMemoryTranslator(source="en-GB", target="sw-KE").translate(s)
+
+    converter = PreserveLayoutConverter(translate_func=translate_func)
     converter.convert(abs_in, output)
     print(f"Saved (preserve layout): {output}")
     return 0
@@ -105,6 +110,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_preserve = subparsers.add_parser("preserve", help="Translate while preserving layout and images (PyMuPDF)")
     p_preserve.add_argument("input", help="Path to input PDF")
     p_preserve.add_argument("output", nargs="?", help="Path to output PDF (default: *_swahili_preserve.pdf)")
+    p_preserve.add_argument("--provider", choices=["auto", "mymemory"], default="auto", help="Force translator provider for preserve mode")
     p_preserve.set_defaults(func=_cmd_preserve)
 
     p_gui = subparsers.add_parser("gui", help="Launch GUI app")

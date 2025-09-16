@@ -5,9 +5,7 @@ import os
 from typing import List, Tuple
 
 import fitz  # PyMuPDF
-import pytesseract
 from PIL import Image
-import io
 
 from step2_translate import translate_to_swahili
 
@@ -23,32 +21,44 @@ class PreserveLayoutConverter:
 
         doc = fitz.open(input_pdf)
 
-        # Collect blocks per page
-        all_blocks: List[List[Tuple[float, float, float, float, str]]] = []
+        # Collect text blocks per page using dict mode so we can preserve basic styling
+        all_blocks: List[List[Tuple[float, float, float, float, str, float, Tuple[float, float, float]]]] = []
         for page in doc:
-            blocks = page.get_text("blocks")  # (x0, y0, x1, y1, text, block_no, block_type)
-            page_blocks: List[Tuple[float, float, float, float, str]] = []
-            for b in blocks:
-                if len(b) >= 5 and isinstance(b[4], str):
-                    x0, y0, x1, y1, text = b[0], b[1], b[2], b[3], b[4]
-                    if text.strip():
-                        page_blocks.append((x0, y0, x1, y1, text))
+            info = page.get_text("dict")
+            page_blocks: List[Tuple[float, float, float, float, str, float, Tuple[float, float, float]]] = []
+            for blk in info.get("blocks", []):
+                if blk.get("type", 0) != 0:
+                    continue  # only text blocks
+                x0, y0, x1, y1 = blk.get("bbox", (0, 0, 0, 0))
+                lines = blk.get("lines", [])
+                texts: List[str] = []
+                max_size: float = 0.0
+                rgb: Tuple[float, float, float] = (0, 0, 0)
+                for ln in lines:
+                    spans = ln.get("spans", [])
+                    line_text = "".join(s.get("text", "") for s in spans)
+                    if line_text.strip():
+                        texts.append(line_text)
+                    for s in spans:
+                        sz = float(s.get("size", 0) or 0)
+                        if sz > max_size:
+                            max_size = sz
+                        col = s.get("color")
+                        if isinstance(col, int):
+                            # color as int 0xRRGGBB
+                            r = ((col >> 16) & 255) / 255.0
+                            g = ((col >> 8) & 255) / 255.0
+                            b = (col & 255) / 255.0
+                            rgb = (r, g, b)
+                text = "\n".join(texts).strip()
+                if text:
+                    page_blocks.append((x0, y0, x1, y1, text, max_size if max_size > 0 else 0.0, rgb))
             all_blocks.append(page_blocks)
 
         for page_index, page in enumerate(doc):
             page_blocks = all_blocks[page_index]
-
+            # If no text blocks (image-only page), leave the page unchanged
             if not page_blocks:
-                # OCR fallback: rasterize page, OCR, and overlay text
-                pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))  # 2x scale for better OCR
-                img = Image.open(io.BytesIO(pix.tobytes("png")))
-                ocr_text = pytesseract.image_to_string(img, lang="eng") or ""
-                if ocr_text.strip():
-                    sw_text = translate_to_swahili(ocr_text, max_workers=self.translate_concurrency)
-                    # Draw a semi-transparent white box and write text top-left; keep images
-                    rect = fitz.Rect(36, 36, page.rect.width - 36, page.rect.height - 36)
-                    page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1), fill_opacity=0.8)
-                    self._draw_fit_text(page, rect, sw_text)
                 continue
 
             # Block-by-block translation for regular text pages
@@ -80,24 +90,30 @@ class PreserveLayoutConverter:
                 page.apply_redactions()
 
             # Draw translated text roughly in original areas
-            for (x0, y0, x1, y1, _txt), new_text in zip(page_blocks, translated_blocks):
+            for (x0, y0, x1, y1, _txt, _sz, _rgb), new_text in zip(page_blocks, translated_blocks):
                 if not (new_text or "").strip():
                     continue
                 rect = fitz.Rect(x0, y0, x1, y1)
-                self._draw_fit_text(page, rect, new_text)
+                self._draw_fit_text(page, rect, new_text, base_size=_sz, color=_rgb)
 
         os.makedirs(os.path.dirname(os.path.abspath(output_pdf)) or ".", exist_ok=True)
         doc.save(output_pdf, deflate=True, incremental=False)
         doc.close()
 
     @staticmethod
-    def _draw_fit_text(page: fitz.Page, rect: fitz.Rect, text: str) -> None:
-        leftover = page.insert_textbox(rect, text, fontsize=0, fontname="helv", color=(0, 0, 0), align=0)
+    def _draw_fit_text(page: fitz.Page, rect: fitz.Rect, text: str, base_size: float | None = None, color: Tuple[float, float, float] = (0, 0, 0)) -> None:
+        # try with provided base size first (approximate original styling)
+        if base_size and base_size > 0:
+            leftover = page.insert_textbox(rect, text, fontsize=base_size, fontname="helv", color=color, align=0)
+            if not leftover:
+                return
+        # then try auto-fit
+        leftover = page.insert_textbox(rect, text, fontsize=0, fontname="helv", color=color, align=0)
         if not leftover:
             return
         for size in (14, 12, 11, 10, 9, 8, 7, 6):
-            leftover = page.insert_textbox(rect, text, fontsize=size, fontname="helv", color=(0, 0, 0), align=0)
+            leftover = page.insert_textbox(rect, text, fontsize=size, fontname="helv", color=color, align=0)
             if not leftover:
                 return
         visible = text[: max(50, len(text) // 4)] + " …"
-        page.insert_textbox(rect, visible, fontsize=6, fontname="helv", color=(0, 0, 0), align=0)
+        page.insert_textbox(rect, visible, fontsize=6, fontname="helv", color=color, align=0)

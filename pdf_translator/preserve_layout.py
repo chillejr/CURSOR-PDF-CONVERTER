@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import os
-from typing import List, Tuple
+from typing import List, Tuple, Dict
 
 import fitz  # PyMuPDF
 from PIL import Image
@@ -21,46 +21,65 @@ class PreserveLayoutConverter:
 
         doc = fitz.open(input_pdf)
 
-        # Collect text spans per page using dict mode (preserve per-span styling)
-        # span tuple: (x0, y0, x1, y1, text, size, rgb_tuple, is_bold, is_italic)
-        all_spans: List[List[Tuple[float, float, float, float, str, float, Tuple[float, float, float], bool, bool]]] = []
+        # Collect line-level boxes per page (reduce overlap):
+        # line tuple: (x0, y0, x1, y1, text, size, rgb_tuple)
+        all_lines: List[List[Tuple[float, float, float, float, str, float, Tuple[float, float, float]]]] = []
         for page in doc:
             info = page.get_text("dict")
-            page_spans: List[Tuple[float, float, float, float, str, float, Tuple[float, float, float], bool, bool]] = []
+            page_lines: List[Tuple[float, float, float, float, str, float, Tuple[float, float, float]]] = []
             for blk in info.get("blocks", []):
                 if blk.get("type", 0) != 0:
                     continue  # only text blocks
                 for ln in blk.get("lines", []):
-                    for s in ln.get("spans", []):
-                        text = s.get("text", "") or ""
-                        if not text.strip():
+                    spans = ln.get("spans", [])
+                    if not spans:
+                        continue
+                    # Compute a bounding box that covers all spans in the line
+                    xs0 = []
+                    ys0 = []
+                    xs1 = []
+                    ys1 = []
+                    texts: List[str] = []
+                    max_size: float = 0.0
+                    col_rgb: Tuple[float, float, float] = (0, 0, 0)
+                    for s in spans:
+                        t = s.get("text", "") or ""
+                        if not t.strip():
                             continue
                         bbox = s.get("bbox") or blk.get("bbox")
                         if not bbox:
                             continue
                         x0, y0, x1, y1 = bbox
-                        size = float(s.get("size", 0) or 0)
+                        xs0.append(x0); ys0.append(y0); xs1.append(x1); ys1.append(y1)
+                        texts.append(t)
+                        sz = float(s.get("size", 0) or 0)
+                        if sz > max_size:
+                            max_size = sz
                         col = s.get("color")
                         if isinstance(col, int):
                             r = ((col >> 16) & 255) / 255.0
                             g = ((col >> 8) & 255) / 255.0
                             b = (col & 255) / 255.0
-                            rgb = (r, g, b)
-                        else:
-                            rgb = (0, 0, 0)
-                        font_name = (s.get("font", "") or "").lower()
-                        is_bold = ("bold" in font_name)
-                        is_italic = ("italic" in font_name) or ("oblique" in font_name)
-                        page_spans.append((x0, y0, x1, y1, text, size, rgb, is_bold, is_italic))
-            all_spans.append(page_spans)
+                            col_rgb = (r, g, b)
+                    if not xs0:
+                        continue
+                    # Join spans with a space to reduce collisions
+                    line_text = " ".join(texts).strip()
+                    if not line_text:
+                        continue
+                    lx0, ly0, lx1, ly1 = min(xs0), min(ys0), max(xs1), max(ys1)
+                    # Small padding inside the line rect to allow wrapping
+                    pad = 1.0
+                    page_lines.append((lx0 + pad, ly0 + pad, lx1 - pad, ly1 - pad, line_text, max_size if max_size > 0 else 0.0, col_rgb))
+            all_lines.append(page_lines)
 
         for page_index, page in enumerate(doc):
-            page_spans = all_spans[page_index]
-            if not page_spans:
+            page_lines = all_lines[page_index]
+            if not page_lines:
                 continue  # image-only page, keep as-is
 
-            # Translate per span
-            originals = [sp[4] for sp in page_spans]
+            # Translate per line
+            originals = [ln[4] for ln in page_lines]
             translated = []
             for txt in originals:
                 if self.translate_func is not None:
@@ -69,25 +88,25 @@ class PreserveLayoutConverter:
                     except Exception:
                         translated.append(txt)
                 else:
-                    translated.append(translate_to_swahili(txt, max_workers=self.translate_concurrency))
+                    translated.append(translate_to_swahili(txt, max_workers=1))
 
-            if len(translated) != len(page_spans):
-                if len(translated) < len(page_spans):
-                    translated += [""] * (len(page_spans) - len(translated))
+            if len(translated) != len(page_lines):
+                if len(translated) < len(page_lines):
+                    translated += [""] * (len(page_lines) - len(translated))
                 else:
-                    translated = translated[: len(page_spans)]
+                    translated = translated[: len(page_lines)]
 
-            # Redact only spans that will be redrawn; keep backgrounds/images
+            # Redact only lines that will be redrawn; keep backgrounds/images
             redact_rects = []
-            for (x0, y0, x1, y1, _t, _sz, _rgb, _b, _i), new_text in zip(page_spans, translated):
+            for (x0, y0, x1, y1, _t, _sz, _rgb), new_text in zip(page_lines, translated):
                 if (new_text or "").strip():
                     page.add_redact_annot(fitz.Rect(x0, y0, x1, y1), fill=None)
                     redact_rects.append(1)
             if redact_rects:
                 page.apply_redactions()
 
-            # Redraw translated text at original span rectangles with approximate styling
-            for (x0, y0, x1, y1, _t, sz, rgb, is_bold, is_italic), new_text in zip(page_spans, translated):
+            # Redraw translated text at line rectangles with auto-fit
+            for (x0, y0, x1, y1, _t, sz, rgb), new_text in zip(page_lines, translated):
                 if not (new_text or "").strip():
                     continue
                 rect = fitz.Rect(x0, y0, x1, y1)

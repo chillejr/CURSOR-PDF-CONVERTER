@@ -91,22 +91,15 @@ class PreserveLayoutConverter:
                 if not (new_text or "").strip():
                     continue
                 rect = fitz.Rect(x0, y0, x1, y1)
-                # Use PDF base-14 Helvetica family to avoid external font files
-                fontname = "Helvetica"
-                if is_bold and is_italic:
-                    fontname = "Helvetica-BoldOblique"
-                elif is_bold:
-                    fontname = "Helvetica-Bold"
-                elif is_italic:
-                    fontname = "Helvetica-Oblique"
-                self._draw_fit_text(page, rect, new_text, base_size=sz, color=rgb, fontname=fontname)
+                # Use base-14 core alias 'helv' to avoid external font files
+                self._draw_fit_text(page, rect, new_text, base_size=sz, color=rgb, fontname="helv")
 
         os.makedirs(os.path.dirname(os.path.abspath(output_pdf)) or ".", exist_ok=True)
         doc.save(output_pdf, deflate=True, incremental=False)
         doc.close()
 
     @staticmethod
-    def _draw_fit_text(page: fitz.Page, rect: fitz.Rect, text: str, base_size: float | None = None, color: Tuple[float, float, float] = (0, 0, 0), fontname: str = "Helvetica") -> None:
+    def _draw_fit_text(page: fitz.Page, rect: fitz.Rect, text: str, base_size: float | None = None, color: Tuple[float, float, float] = (0, 0, 0), fontname: str = "helv") -> None:
         # try with provided base size first (approximate original styling)
         if base_size and base_size > 0:
             leftover = page.insert_textbox(rect, text, fontsize=base_size, fontname=fontname, color=color, align=0)
